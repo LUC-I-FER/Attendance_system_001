@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <title>ESP32-S3 AP</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f5f5f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 16px;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 24px 20px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            text-align: center;
+        }
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 16px;
+            color: #1a73e8;
+        }
+        .info {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
+            text-align: left;
+        }
+        .info p {
+            margin: 6px 0;
+        }
+        .info span {
+            font-weight: 600;
+        }
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 12px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        ul li {
+            background: #f1f3f4;
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            word-break: break-all;
+        }
+        .alert {
+            margin-top: 20px;
+            padding: 16px;
+            background: #fff3cd;
+            border-radius: 10px;
+            border-left: 4px solid #ffc107;
+        }
+        .alert button {
+            background: #1a73e8;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: background 0.2s;
+            width: 100%;
+        }
+        .alert button:hover {
+            background: #1557b0;
+        }
+        .hidden {
+            display: none !important;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #d32f2f;
+        }
+        .footer {
+            margin-top: 20px;
+            font-size: 0.8rem;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📶 ESP32‑S3</h1>
+        <div class="info">
+            <p><span>MAC:</span> <span id="mac">loading…</span></p>
+            <p><span>IP:</span> <span id="ip">loading…</span></p>
+            <p><span>Stations:</span> <span id="count">0</span></p>
+        </div>
+        <ul id="stationList"></ul>
+
+        <div id="captiveAlert" class="alert hidden">
+            <p>🔐 You are connected to the ESP32‑S3 network.<br>Click below to open the portal.</p>
+            <button id="openPortalBtn">📂 Open Portal</button>
+            <div id="status"></div>
+        </div>
+        <div class="footer">auto‑refresh every 5s</div>
+    </div>
+
+    <script>
+        // Helper: fetch JSON with error handling
+        async function fetchJSON(url) {
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return await res.json();
+            } catch {
+                return null;
+            }
+        }
+
+        // Load MAC
+        (async () => {
+            const data = await fetchJSON('/mac');
+            if (data) document.getElementById('mac').textContent = data.mac;
+        })();
+
+        document.getElementById('ip').textContent = window.location.hostname;
+
+        // Update station list
+        async function updateStations() {
+            const data = await fetchJSON('/stations');
+            if (!data) return;
+            document.getElementById('count').textContent = data.length;
+            const list = document.getElementById('stationList');
+            list.innerHTML = '';
+            data.forEach(s => {
+                const li = document.createElement('li');
+                li.textContent = `${s.mac} – ${s.ip}`;
+                list.appendChild(li);
+            });
+        }
+        updateStations();
+        setInterval(updateStations, 5000);
+
+        // Check internet connectivity (captive portal detection)
+        async function checkInternet() {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 3000);
+                await fetch('https://www.google.com/generate_204', { 
+                    method: 'HEAD',
+                    signal: controller.signal,
+                    mode: 'no-cors'
+                });
+                clearTimeout(timeout);
+                document.getElementById('captiveAlert').classList.add('hidden');
+            } catch {
+                document.getElementById('captiveAlert').classList.remove('hidden');
+            }
+        }
+        checkInternet();
+
+        // Open portal button
+        document.getElementById('openPortalBtn').addEventListener('click', function() {
+            const url = 'http://' + window.location.hostname + '/';
+            const win = window.open(url, '_blank');
+            const status = document.getElementById('status');
+            if (!win) {
+                status.textContent = '⚠️ Pop‑up blocked. Please allow pop‑ups or manually open ' + url;
+            } else {
+                status.textContent = '✅ Portal opened!';
+                setTimeout(() => status.textContent = '', 3000);
+            }
+        });
+    </script>
+</body>
+</html>
