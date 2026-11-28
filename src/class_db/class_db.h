@@ -6,7 +6,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#define MAX_CLASSES 25
+#define MAX_CLASSES 32
 
 struct ClassRecord {
     char className[32];
@@ -14,6 +14,7 @@ struct ClassRecord {
     char endTime[8];     // e.g., "10:00"
     char classCode[16];  // Unique key, e.g., "CS101"
     bool isActive;
+    uint8_t classBit;    // Permanent bit index (0..31)
 };
 
 class ClassDB {
@@ -70,6 +71,23 @@ private:
 
         LittleFS.remove(CLASS_FILE);
         return LittleFS.rename(CLASS_TMP, CLASS_FILE);
+    }
+
+    // Find lowest unused bit (0..31). Returns -1 if full.
+    int allocateFreeBitUnlocked() {
+        uint32_t usedMask = 0;
+        for (size_t i = 0; i < classCount; i++) {
+            if (classes[i].classBit < MAX_CLASSES) {
+                usedMask |= (1UL << classes[i].classBit);
+            }
+        }
+
+        for (uint8_t bit = 0; bit < MAX_CLASSES; bit++) {
+            if ((usedMask & (1UL << bit)) == 0) {
+                return bit;
+            }
+        }
+        return -1; // No free bit available
     }
 
 public:
@@ -130,7 +148,7 @@ public:
         return true;
     }
 
-    // 2. Add a class (prevents duplicates and overflow)
+    // 2. Add a class (prevents duplicates and overflow, assigns a permanent classBit 0..31)
     bool addClass(const char* className, const char* startTime,
                   const char* endTime, const char* classCode, bool isActive = false) {
         if (xSemaphoreTake(dbMutex, portMAX_DELAY) != pdTRUE) return false;
@@ -147,6 +165,13 @@ public:
             return false;
         }
 
+        int freeBit = allocateFreeBitUnlocked();
+        if (freeBit < 0) {
+            if (enable_debug) Serial.println("[CLASS_DB] No free classBit available.");
+            xSemaphoreGive(dbMutex);
+            return false;
+        }
+
         if (isActive) {
             for (size_t i = 0; i < classCount; i++) {
                 classes[i].isActive = false;
@@ -159,6 +184,7 @@ public:
         copyStr(c.endTime, endTime, sizeof(c.endTime));
         copyStr(c.classCode, classCode, sizeof(c.classCode));
         c.isActive = isActive;
+        c.classBit = static_cast<uint8_t>(freeBit);
         classCount++;
 
         bool saved = saveClassesUnlocked();

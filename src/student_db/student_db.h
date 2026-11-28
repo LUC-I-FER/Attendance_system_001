@@ -7,11 +7,13 @@
 #include <freertos/semphr.h>
 
 #define MAX_STUDENTS 1000
+#define MAX_CLASS_BITS 32
 
 struct Student {
     char name[32];
     char rollNumber[10];
     char macAddress[18]; // "AA:BB:CC:DD:EE:FF" + null terminator
+    uint32_t classMask;  // 1 bit per class (0..31)
 };
 
 class StudentDB {
@@ -179,6 +181,7 @@ public:
         copyStr(s.name, name, sizeof(s.name));
         copyStr(s.rollNumber, rollNumber, sizeof(s.rollNumber));
         copyStr(s.macAddress, macAddress, sizeof(s.macAddress));
+        s.classMask = 0;
         studentCount++;
 
         bool saved = saveStudentsUnlocked();
@@ -193,7 +196,6 @@ public:
 
         for (size_t i = 0; i < studentCount; i++) {
             if (strcasecmp(students[i].rollNumber, rollNumber) == 0) {
-                // Swap with the last element to avoid shifting hundreds of records
                 if (i < studentCount - 1) {
                     students[i] = students[studentCount - 1];
                 }
@@ -244,5 +246,60 @@ public:
         Student* found = findByMacUnlocked(macAddress);
         xSemaphoreGive(dbMutex);
         return found;
+    }
+
+    // 7. Enroll a student in a class using its classBit (0..31)
+    bool enrollInClass(const char* rollNumber, uint8_t classBit) {
+        if (!students || classBit >= MAX_CLASS_BITS) return false;
+        if (xSemaphoreTake(dbMutex, portMAX_DELAY) != pdTRUE) return false;
+
+        Student* s = findByRollUnlocked(rollNumber);
+        if (!s) {
+            xSemaphoreGive(dbMutex);
+            return false;
+        }
+
+        s->classMask |= (1UL << classBit);
+        bool saved = saveStudentsUnlocked();
+        xSemaphoreGive(dbMutex);
+        return saved;
+    }
+
+    // 8. Unenroll a student from a class
+    bool unenrollFromClass(const char* rollNumber, uint8_t classBit) {
+        if (!students || classBit >= MAX_CLASS_BITS) return false;
+        if (xSemaphoreTake(dbMutex, portMAX_DELAY) != pdTRUE) return false;
+
+        Student* s = findByRollUnlocked(rollNumber);
+        if (!s) {
+            xSemaphoreGive(dbMutex);
+            return false;
+        }
+
+        s->classMask &= ~(1UL << classBit);
+        bool saved = saveStudentsUnlocked();
+        xSemaphoreGive(dbMutex);
+        return saved;
+    }
+
+    // 9. Instant O(1) enrollment check
+    static bool isEnrolled(const Student* s, uint8_t classBit) {
+        if (!s || classBit >= MAX_CLASS_BITS) return false;
+        return (s->classMask & (1UL << classBit)) != 0;
+    }
+
+    // 10. Clear a class bit across all students (call BEFORE deleting a class)
+    bool clearClassBitForAll(uint8_t classBit) {
+        if (!students || classBit >= MAX_CLASS_BITS) return false;
+        if (xSemaphoreTake(dbMutex, portMAX_DELAY) != pdTRUE) return false;
+
+        uint32_t clearMask = ~(1UL << classBit);
+        for (size_t i = 0; i < studentCount; i++) {
+            students[i].classMask &= clearMask;
+        }
+
+        bool saved = saveStudentsUnlocked();
+        xSemaphoreGive(dbMutex);
+        return saved;
     }
 };
